@@ -2,12 +2,14 @@ package gotrntmetainfoparser
 
 import (
 	"bytes"
-	"github.com/jackpal/bencode-go"
 	"crypto/sha1"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/jackpal/bencode-go"
 )
 
 // Structs into which torrent metafile is
@@ -43,30 +45,20 @@ type MetaInfo struct {
 	Encoding     string     "encoding"
 }
 
-// Open .torrent file, un-bencode it and load them into MetaInfo struct.
-func (metaInfo *MetaInfo) ReadTorrentMetaInfoFile(fileNameWithPath string) bool {
-	// Check exntension.
-	if fileExt := filepath.Ext(fileNameWithPath); fileExt != ".torrent" {
-		return false
-	}
-
-	// Open file now.
-	file, er := os.Open(fileNameWithPath)
-	if er != nil {
-		return false
-	}
-	defer file.Close()
+// Read torrent metadata from a reader interface
+func ReadTorrentMetaInfo(reader io.Reader) (*MetaInfo, error) {
+	metaInfo := &MetaInfo{}
 
 	// Decode bencoded metainfo file.
-	fileMetaData, er := bencode.Decode(file)
+	fileMetaData, er := bencode.Decode(reader)
 	if er != nil {
-		return false
+		return nil, er
 	}
 
 	// fileMetaData is map of maps of... maps. Get top level map.
 	metaInfoMap, ok := fileMetaData.(map[string]interface{})
 	if !ok {
-		return false
+		return nil, fmt.Errorf("can not type assert to map[string]interface{}")
 	}
 
 	// Enumerate through child maps.
@@ -75,7 +67,7 @@ func (metaInfo *MetaInfo) ReadTorrentMetaInfoFile(fileNameWithPath string) bool 
 		switch mapKey {
 		case "info":
 			if er = bencode.Marshal(&bytesBuf, mapVal); er != nil {
-				return false
+				return nil, er
 			}
 
 			infoHash := sha1.New()
@@ -83,15 +75,15 @@ func (metaInfo *MetaInfo) ReadTorrentMetaInfoFile(fileNameWithPath string) bool 
 			metaInfo.InfoHash = string(infoHash.Sum(nil))
 
 			if er = bencode.Unmarshal(&bytesBuf, &metaInfo.Info); er != nil {
-				return false
+				return nil, er
 			}
 
 		case "announce-list":
 			if er = bencode.Marshal(&bytesBuf, mapVal); er != nil {
-				return false
+				return nil, er
 			}
 			if er = bencode.Unmarshal(&bytesBuf, &metaInfo.AnnounceList); er != nil {
-				return false
+				return nil, er
 			}
 
 		case "announce":
@@ -111,7 +103,24 @@ func (metaInfo *MetaInfo) ReadTorrentMetaInfoFile(fileNameWithPath string) bool 
 		}
 	}
 
-	return true
+	return metaInfo, nil
+}
+
+// Open .torrent file, un-bencode it and load them into MetaInfo struct.
+func ReadTorrentMetaInfoFile(fileNameWithPath string) (*MetaInfo, error) {
+	// Check exntension.
+	if fileExt := filepath.Ext(fileNameWithPath); fileExt != ".torrent" {
+		return nil, fmt.Errorf("Your file does not have a .torrent extension")
+	}
+
+	// Open file now.
+	file, er := os.Open(fileNameWithPath)
+	if er != nil {
+		return nil, er
+	}
+	defer file.Close()
+
+	return ReadTorrentMetaInfo(file)
 }
 
 // Print torrent meta info struct data.
